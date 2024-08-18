@@ -1,101 +1,148 @@
-#!/usr/bin/python3
-# -*- coding: utf-8 -*-
-import subprocess, os, random, string, sys, shutil, socket, zipfile, urllib.request, urllib.error, urllib.parse, json, base64
+#!/usr/bin/env python3
+
+import subprocess
+import os
+import base64
+import urllib.request
 from itertools import cycle
-from zipfile import ZipFile
-from urllib.request import Request, urlopen
-from urllib.error import URLError, HTTPError
 
-rDownloadURL = "https://bitbucket.org/xoceunder/x-ui/raw/master/sub_xui_xoceunder.tar.gz"
-rPackages = ["libcurl4", "libxslt1-dev", "libgeoip-dev", "e2fsprogs", "wget", "mcrypt", "nscd", "htop", "zip", "unzip", "mc", "libzip5"]
+# Variables Globales
+DOWNLOAD_URL = "https://bitbucket.org/xoceunder/x-ui/raw/master/sub_xui_xoceunder.tar.gz"
+PACKAGES = ["libcurl4", "libxslt1-dev", "libgeoip-dev", "e2fsprogs", "wget", "mcrypt", "nscd", "htop", "zip", "unzip", "mc", "libzip-dev"]
 
-def getVersion():
-    try: return subprocess.check_output("lsb_release -d".split()).split(":")[-1].strip()
-    except: return ""
+def get_version():
+    """Obtiene la versión de la distribución de Linux"""
+    try:
+        output = subprocess.check_output("lsb_release -d".split()).decode().strip()
+        return output.split(":")[-1].strip()
+    except subprocess.CalledProcessError:
+        return ""
 
 def prepare():
-    global rPackages
-    for rFile in ["/var/lib/dpkg/lock-frontend", "/var/cache/apt/archives/lock", "/var/lib/dpkg/lock"]:
-        try: os.remove(rFile)
-        except: pass
+    """Prepara el sistema para la instalación"""
+    global PACKAGES
+    # Elimina archivos de bloqueo de dpkg
+    for file in ["/var/lib/dpkg/lock-frontend", "/var/cache/apt/archives/lock", "/var/lib/dpkg/lock"]:
+        try:
+            os.remove(file)
+        except FileNotFoundError:
+            pass
+
+    # Actualiza el sistema e instala paquetes necesarios
     os.system("apt-get update > /dev/null")
-#    os.system("apt-get remove --auto-remove libcurl4 -y > /dev/null")
-    for rPackage in rPackages: os.system("apt-get install %s -y > /dev/null" % rPackage)
-    os.system("apt-get install -y > /dev/null") # Clean up above
+    for package in PACKAGES:
+        os.system(f"apt-get install {package} -y > /dev/null")
+
+    # Crea usuario y directorio para Xtream Codes
     os.system("adduser --system --shell /bin/false --group --disabled-login xtreamcodes > /dev/null")
-    if not os.path.exists("/home/xtreamcodes"): os.mkdir("/home/xtreamcodes")
+    os.makedirs("/home/xtreamcodes", exist_ok=True)
+
     return True
 
 def install():
-    global rInstall, rDownloadURL
-    rURL = rDownloadURL
-    os.system('wget -q -O "/tmp/xtreamcodes.tar.gz" "%s"' % rURL)
+    """Descarga e instala el paquete Xtream Codes"""
+    url = DOWNLOAD_URL
+    os.system(f'wget -q -O "/tmp/xtreamcodes.tar.gz" "{url}"')
+
     if os.path.exists("/tmp/xtreamcodes.tar.gz"):
         os.system('tar -zxvf "/tmp/xtreamcodes.tar.gz" -C "/home/xtreamcodes/" > /dev/null')
-        try: os.remove("/tmp/xtreamcodes.tar.gz")
-        except: pass
+        try:
+            os.remove("/tmp/xtreamcodes.tar.gz")
+        except FileNotFoundError:
+            pass
         return True
     return False
 
-def encrypt(rHost="127.0.0.1", rUsername="user_iptvpro", rPassword="", rDatabase="xtream_iptvpro", rServerID=1, rPort=7999):
-    try: os.remove("/home/xtreamcodes/iptv_xtream_codes/config")
-    except: pass
-    rf = open('/home/xtreamcodes/iptv_xtream_codes/config', 'wb')
-    lestring=''.join(chr(ord(c)^ord(k)) for c,k in zip('{\"host\":\"%s\",\"db_user\":\"%s\",\"db_pass\":\"%s\",\"db_name\":\"%s\",\"server_id\":\"%d\", \"db_port\":\"%d\"}' % (rHost, rUsername, rPassword, rDatabase, rServerID, rPort), cycle('5709650b0d7806074842c6de575025b1')))
-    rf.write(base64.b64encode(bytes(lestring, 'ascii')))
-    rf.close()
+def encrypt(host="127.0.0.1", username="user_iptvpro", password="", database="xtream_iptvpro", server_id=1, port=7999):
+    """Crea un archivo de configuración encriptado"""
+    config_path = "/home/xtreamcodes/iptv_xtream_codes/config"
+    try:
+        os.remove(config_path)
+    except FileNotFoundError:
+        pass
+
+    with open(config_path, 'wb') as file:
+        data = f'{{"host":"{host}","db_user":"{username}","db_pass":"{password}","db_name":"{database}","server_id":"{server_id}","db_port":"{port}"}}'
+        encrypted = ''.join(chr(ord(c) ^ ord(k)) for c, k in zip(data, cycle('5709650b0d7806074842c6de575025b1')))
+        file.write(base64.b64encode(encrypted.encode('ascii')))
 
 def configure():
-    if not "/home/xtreamcodes/iptv_xtream_codes/" in open("/etc/fstab").read():
-        rFile = open("/etc/fstab", "a")
-        rFile.write("tmpfs /home/xtreamcodes/iptv_xtream_codes/streams tmpfs defaults,noatime,nosuid,nodev,noexec,mode=1777,size=90% 0 0\ntmpfs /home/xtreamcodes/iptv_xtream_codes/tmp tmpfs defaults,noatime,nosuid,nodev,noexec,mode=1777,size=2G 0 0")
-        rFile.close()
-    if not "xtreamcodes" in open("/etc/sudoers").read(): os.system('echo "xtreamcodes ALL = (root) NOPASSWD: /sbin/iptables" >> /etc/sudoers')
+    """Configura el entorno y servicios necesarios"""
+    if "/home/xtreamcodes/iptv_xtream_codes/" not in open("/etc/fstab").read():
+        with open("/etc/fstab", "a") as fstab_file:
+            fstab_file.write("tmpfs /home/xtreamcodes/iptv_xtream_codes/streams tmpfs defaults,noatime,nosuid,nodev,noexec,mode=1777,size=90% 0 0\n")
+            fstab_file.write("tmpfs /home/xtreamcodes/iptv_xtream_codes/tmp tmpfs defaults,noatime,nosuid,nodev,noexec,mode=1777,size=2G 0 0\n")
+
+    if "xtreamcodes" not in open("/etc/sudoers").read():
+        os.system('echo "xtreamcodes ALL = (root) NOPASSWD: /sbin/iptables" >> /etc/sudoers')
+
     if not os.path.exists("/etc/init.d/xtreamcodes"):
-        rFile = open("/etc/init.d/xtreamcodes", "w")
-        rFile.write("#! /bin/bash\n/home/xtreamcodes/iptv_xtream_codes/start_services.sh")
-        rFile.close()
-        os.system("chmod +x /etc/init.d/xtreamcodes > /dev/null")
-    try: os.remove("/usr/bin/ffmpeg")
-    except: pass
-    if not os.path.exists("/home/xtreamcodes/iptv_xtream_codes/tv_archive"): os.mkdir("/home/xtreamcodes/iptv_xtream_codes/tv_archive/")
-    os.system("ln -s /home/xtreamcodes/iptv_xtream_codes/bin/ffmpeg /usr/bin/")
+        with open("/etc/init.d/xtreamcodes", "w") as init_file:
+            init_file.write("#! /bin/bash\n/home/xtreamcodes/iptv_xtream_codes/start_services.sh")
+        os.chmod("/etc/init.d/xtreamcodes", 0o755)
+
+    try:
+        os.remove("/usr/bin/ffmpeg")
+    except FileNotFoundError:
+        pass
+
+    if not os.path.exists("/home/xtreamcodes/iptv_xtream_codes/tv_archive"):
+        os.makedirs("/home/xtreamcodes/iptv_xtream_codes/tv_archive/")
+
+    os.symlink("/home/xtreamcodes/iptv_xtream_codes/bin/ffmpeg", "/usr/bin/ffmpeg")
+
     os.system("chattr -i /home/xtreamcodes/iptv_xtream_codes/GeoLite2.mmdb > /dev/null")
     os.system("wget -q https://bitbucket.org/le_lio/assets/raw/master/GeoLite2.mmdb -O /home/xtreamcodes/iptv_xtream_codes/GeoLite2.mmdb")
     os.system("wget -q https://bitbucket.org/le_lio/assets/raw/master/pid_monitor.php -O /home/xtreamcodes/iptv_xtream_codes/crons/pid_monitor.php")
+
     os.system("chown xtreamcodes:xtreamcodes -R /home/xtreamcodes > /dev/null")
     os.system("chmod -R 0777 /home/xtreamcodes > /dev/null")
     os.system("chattr +i /home/xtreamcodes/iptv_xtream_codes/GeoLite2.mmdb > /dev/null")
+
     os.system("sed -i 's|chown -R xtreamcodes:xtreamcodes /home/xtreamcodes|chown -R xtreamcodes:xtreamcodes /home/xtreamcodes 2>/dev/null|g' /home/xtreamcodes/iptv_xtream_codes/start_services.sh")
-    os.system("chmod +x /home/xtreamcodes/iptv_xtream_codes/start_services.sh > /dev/null")
+    os.chmod("/home/xtreamcodes/iptv_xtream_codes/start_services.sh", 0o755)
+
     os.system("mount -a")
-    os.system("chmod 0700 /home/xtreamcodes/iptv_xtream_codes/config > /dev/null")
+    os.chmod("/home/xtreamcodes/iptv_xtream_codes/config", 0o700)
     os.system("sed -i 's|echo \"Xtream Codes Reborn\";|header(\"Location: https://www.google.com/\");|g' /home/xtreamcodes/iptv_xtream_codes/wwwdir/index.php")
-    if not "api.xtream-codes.com" in open("/etc/hosts").read(): os.system('echo "127.0.0.1    api.xtream-codes.com" >> /etc/hosts')
-    if not "downloads.xtream-codes.com" in open("/etc/hosts").read(): os.system('echo "127.0.0.1    downloads.xtream-codes.com" >> /etc/hosts')
-    if not "xtream-codes.com" in open("/etc/hosts").read(): os.system('echo "127.0.0.1    xtream-codes.com" >> /etc/hosts')
-    if not "@reboot root /home/xtreamcodes/iptv_xtream_codes/start_services.sh" in open("/etc/crontab").read(): os.system('echo "@reboot root /home/xtreamcodes/iptv_xtream_codes/start_services.sh" >> /etc/crontab')
 
-def start(): os.system("/home/xtreamcodes/iptv_xtream_codes/start_services.sh > /dev/null")
+    with open("/etc/hosts", "a") as hosts_file:
+        hosts_file.write("127.0.0.1    api.xtream-codes.com\n")
+        hosts_file.write("127.0.0.1    downloads.xtream-codes.com\n")
+        hosts_file.write("127.0.0.1    xtream-codes.com\n")
 
-def setPorts(rPorts):
-    os.system("sed -i 's/listen 25461;/listen %d;/g' /home/xtreamcodes/iptv_xtream_codes/nginx/conf/nginx.conf" % rPorts[0])
-    os.system("sed -i 's/:25461/:%d/g' /home/xtreamcodes/iptv_xtream_codes/nginx_rtmp/conf/nginx.conf" % rPorts[0])
-    os.system("sed -i 's/listen 25463 ssl;/listen %d ssl;/g' /home/xtreamcodes/iptv_xtream_codes/nginx/conf/nginx.conf" % rPorts[1])
-    os.system("sed -i 's/listen 25462;/listen %d;/g' /home/xtreamcodes/iptv_xtream_codes/nginx_rtmp/conf/nginx.conf" % rPorts[2])
+    if "@reboot root /home/xtreamcodes/iptv_xtream_codes/start_services.sh" not in open("/etc/crontab").read():
+        os.system('@echo "@reboot root /home/xtreamcodes/iptv_xtream_codes/start_services.sh" >> /etc/crontab')
+
+def firewall():
+    """Configura el firewall"""
+    os.system("apt-get install -y iptables-persistent netfilter-persistent")
+    os.system("iptables -F INPUT")
+    os.system("iptables -A INPUT -i lo -j ACCEPT")
+    os.system("iptables -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT")
+    os.system("iptables -A INPUT -p tcp --dport 80 -j ACCEPT")
+    os.system("iptables -A INPUT -p tcp --dport 7999 -j ACCEPT")
+    os.system("iptables -A INPUT -j DROP")
+    os.system("iptables-save > /etc/iptables/rules.v4")
+    os.system("netfilter-persistent save")
+
+def networking():
+    """Reinicia la red"""
+    os.system("systemctl restart networking")
+    os.system("ifdown eth0 && ifup eth0")
 
 if __name__ == "__main__":
-    rHost = sys.argv[1]
-    rPort = int(sys.argv[2])
-    rUsername = sys.argv[3]
-    rPassword = sys.argv[4]
-    rDatabase = sys.argv[5]
-    rServerID = int(sys.argv[6])
-    try: rPorts = [int(sys.argv[7]), int(sys.argv[8]), int(sys.argv[9])]
-    except: rPorts = None
-    rRet = prepare()
-    if not install(): sys.exit(1)
-    encrypt(rHost, rUsername, rPassword, rDatabase, rServerID, rPort)
-    configure()
-    if rPorts: setPorts(rPorts)
-    start()
+    if get_version() == "Ubuntu 22.04.2 LTS":
+        if prepare():
+            if install():
+                encrypt()
+                configure()
+                firewall()
+                networking()
+                print("Xtream Codes Reborn ha sido instalado y configurado exitosamente.")
+            else:
+                print("No se pudo instalar Xtream Codes Reborn.")
+        else:
+            print("No se pudo preparar el sistema.")
+    else:
+        print("Versión de OS no soportada.")
